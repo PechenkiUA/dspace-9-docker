@@ -68,24 +68,47 @@ services:
       DB_PASS: ${DB_PASS:-dspace}
       SOLR_HOST: solr
       SOLR_PORT: 8983
-      DSPACE_SERVER_URL: ${DSPACE_SERVER_URL:-http://localhost:8080/server}
-      DSPACE_UI_URL: ${DSPACE_UI_URL:-http://localhost:4000}
+      # Both URLs use localhost because nginx is the single entry point on port 80.
+      DSPACE_SERVER_URL: ${DSPACE_SERVER_URL:-http://localhost/server}
+      DSPACE_UI_URL: ${DSPACE_UI_URL:-http://localhost}
       DSPACE_NAME: ${DSPACE_NAME:-My DSpace Repository}
       DSPACE_ADMIN_EMAIL: ${DSPACE_ADMIN_EMAIL:-admin@example.com}
       DSPACE_ADMIN_PASS: ${DSPACE_ADMIN_PASS:-admin}
       DSPACE_ADMIN_FIRSTNAME: ${DSPACE_ADMIN_FIRSTNAME:-DSpace}
       DSPACE_ADMIN_LASTNAME: ${DSPACE_ADMIN_LASTNAME:-Administrator}
       JAVA_OPTS: "${JAVA_OPTS:--Xmx2g -Xms512m -Dfile.encoding=UTF-8}"
+      FRONTEND_PORT: ${PROXY_PORT:-80}
     volumes:
-      - assetstore:/dspace/assetstore
-      - dspacelogs:/dspace/log
+      # Mount all of /dspace so ant fresh_install output survives container restarts.
+      # Without this the ephemeral filesystem resets on every restart, causing
+      # the marker to be found (in assetstore) but /dspace/config/ to be missing.
+      - dspace_home:/dspace
     ports:
-      - "${BACKEND_PORT:-8080}:8080"
+      - "${BACKEND_PORT:-8080}:8080"   # direct API access / debugging
     networks:
       - dspace-net
     restart: unless-stopped
 
-  # ─── DSpace Frontend (Angular UI) ─────────────────────────────────────────────
+  # ─── Nginx reverse proxy ───────────────────────────────────────────────────────
+  # Single entry point: localhost:80
+  #   /server  → dspace:8080  (REST API)
+  #   /        → 127.0.0.1:4000 (Angular SSR, shared network namespace with dspace-ui)
+  nginx:
+    image: nginx:alpine
+    container_name: dspace-proxy
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    ports:
+      - "${PROXY_PORT:-80}:80"
+    depends_on:
+      - dspace
+    networks:
+      - dspace-net
+    restart: unless-stopped
+
+  # ─── DSpace Frontend (Angular SSR) ────────────────────────────────────────────
+  # Uses nginx's network namespace → SSR Node.js calls localhost:80 which IS nginx.
+  # No ports/networks section — nginx handles all exposure.
   dspace-ui:
     build:
       context: .
@@ -93,29 +116,25 @@ services:
       args:
         DSPACE_VERSION: ${DSPACE_VERSION:-9.0}
     container_name: dspace-frontend
+    network_mode: "service:nginx"      # share nginx's loopback: localhost = nginx
     depends_on:
-      - dspace
+      - nginx
     environment:
       DSPACE_UI_SSL: "false"
-      DSPACE_UI_HOST: "0.0.0.0"
-      DSPACE_UI_PORT: "4000"
+      DSPACE_UI_HOST: "localhost"
+      DSPACE_UI_PORT: "4000"           # SSR listens on 4000 within shared namespace
       DSPACE_UI_NAMESPACE: "/"
       DSPACE_REST_SSL: "false"
-      DSPACE_REST_HOST: ${DSPACE_REST_HOST:-localhost}
-      DSPACE_REST_PORT: ${BACKEND_PORT:-8080}
+      DSPACE_REST_HOST: "localhost"    # nginx is on localhost:80 in shared namespace
+      DSPACE_REST_PORT: "${PROXY_PORT:-80}"
       DSPACE_REST_NAMESPACE: "/server"
       NODE_OPTIONS: "--max-old-space-size=2048"
-    ports:
-      - "${FRONTEND_PORT:-4000}:4000"
-    networks:
-      - dspace-net
     restart: unless-stopped
 
 volumes:
   pgdata:
   solrdata:
-  assetstore:
-  dspacelogs:
+  dspace_home:    # all of /dspace — persists ant install output across restarts
 
 networks:
   dspace-net:

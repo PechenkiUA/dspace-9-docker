@@ -22,7 +22,7 @@ db.maxConnections  = 30
 
 solr.server        = http://${SOLR_HOST:-solr}:${SOLR_PORT:-8983}/solr
 
-rest.cors.allowed-origins = ${DSPACE_UI_URL:-http://localhost:4000}
+rest.cors.allowed-origins = ${DSPACE_UI_URL:-http://localhost}, http://localhost:${FRONTEND_PORT:-80}
 EOF
 }
 
@@ -44,6 +44,7 @@ if [ ! -f "${MARKER}" ]; then
 fi
 
 # ─── Always (re)write local.cfg — env vars may change between restarts ─────────
+mkdir -p "${DSPACE_HOME}/config"
 generate_local_cfg "${DSPACE_HOME}/config/local.cfg"
 chown dspace:dspace "${DSPACE_HOME}/config/local.cfg"
 
