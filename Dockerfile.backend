@@ -1,0 +1,46 @@
+# syntax=docker/dockerfile:1
+ARG DSPACE_VERSION=9.0
+
+# ─── Stage 1: Maven build only (no DB needed) ─────────────────────────────────
+FROM maven:3.9-eclipse-temurin-17 AS builder
+ARG DSPACE_VERSION
+
+WORKDIR /build
+
+# Download DSpace source
+RUN curl -fsSL \
+    "https://github.com/DSpace/DSpace/archive/refs/tags/dspace-${DSPACE_VERSION}.tar.gz" \
+    | tar xz --strip-components=1
+
+# Build-time local.cfg — only needs dspace.dir for Maven packaging
+COPY config/local.build.cfg dspace/config/local.cfg
+
+# Maven build — produces dspace/target/dspace-installer/
+# Cache .m2 between rebuilds with BuildKit
+RUN --mount=type=cache,target=/root/.m2 \
+    mvn package -DskipTests --no-transfer-progress
+
+# ─── Stage 2: Runtime ─────────────────────────────────────────────────────────
+FROM eclipse-temurin:17-jre-jammy AS runtime
+
+# ant  — runs fresh_install at first startup (needs DB)
+# gosu — drops privileges cleanly before exec
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends ant gosu && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN useradd -m -s /bin/bash dspace && \
+    mkdir -p /dspace /dspace-installer
+
+# Copy the Maven installer artifacts into the image
+COPY --from=builder --chown=root:root \
+    /build/dspace/target/dspace-installer /dspace-installer
+
+COPY scripts/backend-entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+# Run entrypoint as root so it can do ant install + chown,
+# then it drops to the dspace user via gosu before starting Java.
+WORKDIR /dspace
+EXPOSE 8080
+ENTRYPOINT ["/entrypoint.sh"]

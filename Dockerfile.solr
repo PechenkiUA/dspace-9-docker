@@ -1,0 +1,30 @@
+# syntax=docker/dockerfile:1
+ARG DSPACE_VERSION=9.0
+
+FROM solr:9.7 AS runtime
+ARG DSPACE_VERSION
+
+USER root
+
+RUN apt-get update && apt-get install -y --no-install-recommends curl && \
+    rm -rf /var/lib/apt/lists/*
+
+# Download DSpace source (only to extract Solr configs)
+RUN mkdir -p /tmp/dspace-src && \
+    curl -fsSL \
+    "https://github.com/DSpace/DSpace/archive/refs/tags/dspace-${DSPACE_VERSION}.tar.gz" \
+    | tar xz --strip-components=1 -C /tmp/dspace-src
+
+# Create Solr cores with DSpace configuration
+# DSpace 9.x uses: authority, oai, search, statistics
+RUN for core in authority oai search statistics; do \
+        mkdir -p /var/solr/data/${core}; \
+        cp -r /tmp/dspace-src/dspace/solr/${core}/conf \
+              /var/solr/data/${core}/conf; \
+        printf "name=%s\n" "${core}" \
+              > /var/solr/data/${core}/core.properties; \
+    done && \
+    chown -R solr:solr /var/solr/data && \
+    rm -rf /tmp/dspace-src
+
+USER solr
