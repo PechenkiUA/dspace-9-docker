@@ -51,7 +51,7 @@ Angular SSR (Node.js) та nginx share one network namespace, тому обид�
 ### 1. Клонувати репозиторій
 
 ```bash
-git clone https://github.com/<your-org>/dspace-9-docker.git
+git clone https://github.com/PechenkiUA/dspace-9-docker.git
 cd dspace-9-docker
 ```
 
